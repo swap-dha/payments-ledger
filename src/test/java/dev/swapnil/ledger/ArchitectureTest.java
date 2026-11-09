@@ -19,6 +19,12 @@ class ArchitectureTest {
                     "org.springframework..", "jakarta.persistence..", "java.sql..", "org.apache.kafka..");
 
     @ArchTest
+    static final ArchRule applicationIsFrameworkFree = noClasses()
+            .that().resideInAPackage("..application..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "org.springframework..", "java.sql..", "org.apache.kafka..");
+
+    @ArchTest
     static final ArchRule layersPointInward = layeredArchitecture()
             .consideringOnlyDependenciesInLayers()
             .layer("Domain").definedBy("..domain..")

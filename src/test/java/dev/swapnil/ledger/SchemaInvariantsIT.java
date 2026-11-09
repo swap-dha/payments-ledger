@@ -80,12 +80,30 @@ class SchemaInvariantsIT {
     @Test
     void duplicateIdempotencyKeyIsRejected() {
         String key = "dup-" + UUID.randomUUID(); // unique per run, so reruns on the same DB don't collide
-        String sql = "INSERT INTO journal_entry (id, idempotency_key, currency, effective_date) "
-                + "VALUES (?, ?, 'INR', CURRENT_DATE)";
-        jdbc.update(sql, UUID.randomUUID(), key);
+        tx.executeWithoutResult(s -> balancedEntryWithKey(key));
 
-        assertThatThrownBy(() -> jdbc.update(sql, UUID.randomUUID(), key))
+        assertThatThrownBy(() -> tx.executeWithoutResult(s -> balancedEntryWithKey(key)))
                 .rootCause().hasMessageContaining("idempotency_key");
+    }
+
+    @Test
+    void entryWithoutPostingsIsRejectedAtCommit() {
+        assertThatThrownBy(() -> tx.executeWithoutResult(s -> insertEntry()))
+                .rootCause().hasMessageContaining("at least 2 are required");
+    }
+
+    @Test
+    void entryWithASinglePostingIsRejectedAtCommit() {
+        assertThatThrownBy(() -> tx.executeWithoutResult(s -> insertPosting(insertEntry(), cash, 100)))
+                .rootCause().hasMessageMatching("(?s).*(has 1 posting|unbalanced).*");
+    }
+
+    private void balancedEntryWithKey(String key) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO journal_entry (id, idempotency_key, currency, effective_date) "
+                + "VALUES (?, ?, 'INR', CURRENT_DATE)", id, key);
+        insertPosting(id, cash, 100);
+        insertPosting(id, customer, -100);
     }
 
     private UUID insertAccount(String type) {

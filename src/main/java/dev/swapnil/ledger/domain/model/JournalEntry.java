@@ -42,6 +42,30 @@ public final class JournalEntry {
 
     public static JournalEntry create(String idempotencyKey, Currency currency, LocalDate effectiveDate,
                                       String description, List<Posting> postings) {
+        return build(UUID.randomUUID(), idempotencyKey, currency, effectiveDate, description, postings);
+    }
+
+    /**
+     * Reconstructs a stored entry. Runs the same invariant checks as {@link #create}, so a corrupted
+     * row can never become a valid object in memory.
+     */
+    public static JournalEntry rehydrate(UUID id, String idempotencyKey, Currency currency, LocalDate effectiveDate,
+                                         String description, List<Posting> postings) {
+        return build(Objects.requireNonNull(id, "id"), idempotencyKey, currency, effectiveDate, description, postings);
+    }
+
+    /**
+     * True when {@code other} would move exactly the same money: same currency, date and legs,
+     * in any order. Used to tell a genuine retry from a different request reusing a key.
+     */
+    public boolean hasSameEffectAs(JournalEntry other) {
+        return currency.equals(other.currency)
+                && effectiveDate.equals(other.effectiveDate)
+                && new HashSet<>(postings).equals(new HashSet<>(other.postings));
+    }
+
+    private static JournalEntry build(UUID id, String idempotencyKey, Currency currency, LocalDate effectiveDate,
+                                      String description, List<Posting> postings) {
         Objects.requireNonNull(currency, "currency");
         Objects.requireNonNull(effectiveDate, "effectiveDate");
         Objects.requireNonNull(postings, "postings");
@@ -71,7 +95,7 @@ public final class JournalEntry {
             throw new InvalidJournalEntryException("a journal entry needs at least one debit and one credit");
         }
 
-        return new JournalEntry(UUID.randomUUID(), idempotencyKey, currency, effectiveDate, description, copy);
+        return new JournalEntry(id, idempotencyKey, currency, effectiveDate, description, copy);
     }
 
     /** The common case: move {@code amountMinor} from one account to another. */

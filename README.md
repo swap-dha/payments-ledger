@@ -4,7 +4,7 @@
 
 A double-entry payments ledger in Java 21 and Spring Boot 4, built the way banking systems need to be built: every movement of money balances, nothing is ever updated in place, and retries never double-post.
 
-> **Status:** Day 2 of a 14-day public build. Domain model, schema and invariants are done; the REST API, concurrency control and Kafka outbox are next. See [Roadmap](#roadmap).
+> **Status:** Day 3 of a 14-day public build. Domain model, schema invariants, persistence and the idempotent transfer use case are done; the REST API, balance-level concurrency control and Kafka outbox are next. See [Roadmap](#roadmap).
 
 ## Why this exists
 
@@ -14,7 +14,9 @@ Most "wallet" demos store a `balance` column and update it. Real ledgers don't: 
 | --- | --- | --- |
 | Every entry's postings sum to zero | `JournalEntry.create` rejects it | Deferred constraint trigger, checked at commit |
 | Ledger history is immutable | No setters; postings list is unmodifiable | `UPDATE`/`DELETE` blocked by trigger |
-| A retried request never double-posts | Idempotency key required on every entry | `UNIQUE (idempotency_key)` |
+| A retried request never double-posts | Same key + same transfer returns the original id; same key + different transfer is rejected | `UNIQUE (idempotency_key)` |
+| Concurrent identical requests post once | Loser of the race reads the winner's entry | Unique constraint decides the winner |
+| No entry without legs | At least two postings, one debit and one credit | Deferred trigger: entry needs ≥ 2 postings at commit |
 | No zero or overflowing amounts | `Posting` rejects zero; sums use `Math.addExact` | `CHECK (amount_minor <> 0)` |
 
 Amounts are `long` minor units (paise, cents), never `double`.
@@ -33,6 +35,7 @@ adapter/in/web  ──►  application/port/in  ──►  domain/model  ◄─�
 src/main/java/dev/swapnil/ledger
 ├── domain/model          JournalEntry, Posting, Account, AccountType
 ├── application/port/in   PostTransferUseCase
+├── application/service   TransferService (framework-free)
 ├── application/port/out  JournalEntryRepository, AccountRepository
 └── adapter
     ├── in/web            REST controllers (Days 5-6)
@@ -51,15 +54,18 @@ mvn verify                   # unit + architecture tests, then Testcontainers in
 
 ## Tests
 
+- `TransferServiceTest` — 7 cases with in-memory adapters: retries, key reuse conflicts, a simulated race, unknown accounts, currency mismatch.
+- `TransferServiceIT` — through real adapters and PostgreSQL, including **10 threads posting the same request at once: one entry, one id, money moved once**.
 - `JournalEntryTest` — 16 cases covering balanced entries, multi-leg entries with fees, rejection of unbalanced, single-leg, duplicate-account, self-transfer, zero, negative and overflowing amounts.
-- `ArchitectureTest` — the domain may not depend on Spring, JDBC, JPA or Kafka; layers point inward.
-- `SchemaInvariantsIT` — against real PostgreSQL via Testcontainers: unbalanced entries are rejected at commit, postings are append-only, duplicate idempotency keys fail.
+- `ArchitectureTest` — neither the domain nor the application layer may depend on Spring, JDBC or Kafka; layers point inward.
+- `SchemaInvariantsIT` — against real PostgreSQL via Testcontainers: unbalanced entries and entries with fewer than two postings are rejected at commit, postings are append-only, duplicate idempotency keys fail.
 
 ## Roadmap
 
 - [x] Days 1-2 — schema, Hexagonal layout, docker-compose, CI
 - [x] Days 3-4 — domain model and zero-sum invariant
-- [ ] Days 5-6 — REST API with `Idempotency-Key` header; retry returns the original result
+- [x] Days 5-6 (part 1) — JDBC persistence, idempotent transfer use case, concurrent-retry test
+- [ ] Days 5-6 (part 2) — REST API with `Idempotency-Key` header
 - [ ] Days 7-8 — concurrent debits on one account, proven with a parallel test
 - [ ] Days 9-10 — transactional outbox to Kafka, exactly-once publication test
 - [ ] Days 11-12 — end-of-day transaction report reconciled against balances
@@ -70,3 +76,4 @@ mvn verify                   # unit + architecture tests, then Testcontainers in
 - **Signed postings instead of debit/credit columns.** One `amount_minor` column with `+` for debit and `-` for credit makes the zero-sum check a single `SUM`.
 - **Deferred constraint trigger.** The balance check runs at `COMMIT`, after all postings of an entry are inserted, so the database never sees a half-written entry as valid or invalid.
 - **No stored balances (yet).** Balances are derived from postings. A cached balance with optimistic locking comes on Days 7-8, when it is needed for concurrent debit checks.
+- **Transactions live in the adapter, not the service.** `TransferService` has no Spring imports. The JDBC adapter wraps entry + postings in one transaction, which also lets the service recover from a lost idempotency race in a fresh transaction. A failed `INSERT` aborts a PostgreSQL transaction, so retrying inside it would be impossible.
