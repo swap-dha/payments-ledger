@@ -60,7 +60,7 @@ class SchemaInvariantsIT {
             UUID id = insertEntry();
             insertPosting(id, cash, 10_000);
             insertPosting(id, customer, -9_999);
-        })).hasMessageContaining("unbalanced");
+        })).rootCause().hasMessageContaining("unbalanced");
     }
 
     @Test
@@ -74,17 +74,18 @@ class SchemaInvariantsIT {
 
         assertThatThrownBy(() -> jdbc.update(
                 "UPDATE posting SET amount_minor = 1 WHERE journal_entry_id = ?", entry))
-                .hasMessageContaining("append-only");
+                .rootCause().hasMessageContaining("append-only");
     }
 
     @Test
     void duplicateIdempotencyKeyIsRejected() {
-        jdbc.update("INSERT INTO journal_entry (id, idempotency_key, currency, effective_date) "
-                + "VALUES (?, 'dup-key', 'INR', CURRENT_DATE)", UUID.randomUUID());
+        String key = "dup-" + UUID.randomUUID(); // unique per run, so reruns on the same DB don't collide
+        String sql = "INSERT INTO journal_entry (id, idempotency_key, currency, effective_date) "
+                + "VALUES (?, ?, 'INR', CURRENT_DATE)";
+        jdbc.update(sql, UUID.randomUUID(), key);
 
-        assertThatThrownBy(() -> jdbc.update("INSERT INTO journal_entry (id, idempotency_key, currency, effective_date) "
-                + "VALUES (?, 'dup-key', 'INR', CURRENT_DATE)", UUID.randomUUID()))
-                .hasMessageContaining("idempotency_key");
+        assertThatThrownBy(() -> jdbc.update(sql, UUID.randomUUID(), key))
+                .rootCause().hasMessageContaining("idempotency_key");
     }
 
     private UUID insertAccount(String type) {
