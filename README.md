@@ -1,5 +1,7 @@
 # payments-ledger
 
+[![CI](https://github.com/swap-dha/payments-ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/swap-dha/payments-ledger/actions/workflows/ci.yml)
+
 A double-entry payments ledger in Java 21 and Spring Boot 4, built the way banking systems need to be built: every movement of money balances, nothing is ever updated in place, and retries never double-post.
 
 > **Status:** Day 2 of a 14-day public build. Domain model, schema and invariants are done; the REST API, concurrency control and Kafka outbox are next. See [Roadmap](#roadmap).
