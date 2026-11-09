@@ -12,7 +12,6 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.util.Currency;
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Posts a transfer exactly once per idempotency key.
@@ -39,7 +38,7 @@ public class TransferService implements PostTransferUseCase {
     }
 
     @Override
-    public UUID postTransfer(TransferCommand cmd) {
+    public TransferResult postTransfer(TransferCommand cmd) {
         Currency currency = Currency.getInstance(cmd.currency());
         LocalDate date = cmd.effectiveDate() != null ? cmd.effectiveDate() : LocalDate.now(clock);
 
@@ -56,7 +55,7 @@ public class TransferService implements PostTransferUseCase {
 
         try {
             entries.save(requested);
-            return requested.id();
+            return new TransferResult(requested.id(), false);
         } catch (DuplicateIdempotencyKeyException raceLost) {
             JournalEntry winner = entries.findByIdempotencyKey(cmd.idempotencyKey())
                     .orElseThrow(() -> raceLost);
@@ -64,11 +63,11 @@ public class TransferService implements PostTransferUseCase {
         }
     }
 
-    private UUID replay(JournalEntry stored, JournalEntry requested) {
+    private TransferResult replay(JournalEntry stored, JournalEntry requested) {
         if (!stored.hasSameEffectAs(requested)) {
             throw new IdempotencyConflictException(requested.idempotencyKey());
         }
-        return stored.id();
+        return new TransferResult(stored.id(), true);
     }
 
     private void requireAccountIn(AccountId id, Currency currency) {

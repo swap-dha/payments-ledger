@@ -62,7 +62,7 @@ class TransferServiceIT {
     @Test
     void transferIsStoredAndBalancesFollow() {
         String key = key();
-        UUID id = transfers.postTransfer(cmd(key, 25_000));
+        UUID id = transfers.postTransfer(cmd(key, 25_000)).entryId();
 
         assertThat(entries.findByIdempotencyKey(key)).hasValueSatisfying(e -> {
             assertThat(e.id()).isEqualTo(id);
@@ -75,7 +75,7 @@ class TransferServiceIT {
     @Test
     void storedEntryRoundTripsIntoTheDomainUnchanged() {
         String key = key();
-        UUID id = transfers.postTransfer(cmd(key, 1_234));
+        UUID id = transfers.postTransfer(cmd(key, 1_234)).entryId();
 
         var stored = entries.findByIdempotencyKey(key).orElseThrow();
         assertThat(stored.id()).isEqualTo(id);
@@ -95,7 +95,7 @@ class TransferServiceIT {
             for (int i = 0; i < threads; i++) {
                 Callable<UUID> call = () -> {
                     start.await();          // release all threads at once to force the race
-                    return transfers.postTransfer(cmd(key, 5_000));
+                    return transfers.postTransfer(cmd(key, 5_000)).entryId();
                 };
                 results.add(pool.submit(call));
             }

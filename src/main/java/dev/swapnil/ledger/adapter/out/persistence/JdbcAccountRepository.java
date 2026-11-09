@@ -1,9 +1,11 @@
 package dev.swapnil.ledger.adapter.out.persistence;
 
 import dev.swapnil.ledger.application.port.out.AccountRepository;
+import dev.swapnil.ledger.application.port.out.DuplicateAccountCodeException;
 import dev.swapnil.ledger.domain.model.Account;
 import dev.swapnil.ledger.domain.model.AccountId;
 import dev.swapnil.ledger.domain.model.AccountType;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -22,6 +24,14 @@ class JdbcAccountRepository implements AccountRepository {
 
     @Override
     public void save(Account account) {
+        try {
+            insert(account);
+        } catch (DuplicateKeyException e) {
+            throw new DuplicateAccountCodeException(account.code(), e);
+        }
+    }
+
+    private void insert(Account account) {
         jdbc.sql("""
                 INSERT INTO account (id, code, name, currency, type)
                 VALUES (:id, :code, :name, :currency, :type)

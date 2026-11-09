@@ -50,10 +50,10 @@ class TransferServiceTest {
 
     @Test
     void postsATransferAndMovesTheMoney() {
-        UUID id = service.postTransfer(transfer("k1", 10_000));
+        var result = service.postTransfer(transfer("k1", 10_000));
 
-        assertThat(entries.byKey).containsKey("k1");
-        assertThat(entries.byKey.get("k1").id()).isEqualTo(id);
+        assertThat(result.replayed()).isFalse();
+        assertThat(entries.byKey.get("k1").id()).isEqualTo(result.entryId());
         assertThat(accounts.signedPostingSum(cash.id())).isEqualTo(-10_000);
         assertThat(accounts.signedPostingSum(customer.id())).isEqualTo(10_000);
     }
@@ -66,10 +66,11 @@ class TransferServiceTest {
 
     @Test
     void retryWithSameKeyAndSamePayloadReturnsOriginalIdAndPostsOnce() {
-        UUID first = service.postTransfer(transfer("k1", 10_000));
-        UUID retry = service.postTransfer(transfer("k1", 10_000));
+        var first = service.postTransfer(transfer("k1", 10_000));
+        var retry = service.postTransfer(transfer("k1", 10_000));
 
-        assertThat(retry).isEqualTo(first);
+        assertThat(retry.entryId()).isEqualTo(first.entryId());
+        assertThat(retry.replayed()).isTrue();
         assertThat(entries.saves).isEqualTo(1);
         assertThat(accounts.signedPostingSum(customer.id())).isEqualTo(10_000);
     }
@@ -91,9 +92,10 @@ class TransferServiceTest {
                 LocalDate.of(2026, 11, 9), null);
         entries.commitBehindOurBack = winner;
 
-        UUID id = service.postTransfer(transfer("k1", 10_000));
+        var result = service.postTransfer(transfer("k1", 10_000));
 
-        assertThat(id).isEqualTo(winner.id());
+        assertThat(result.entryId()).isEqualTo(winner.id());
+        assertThat(result.replayed()).isTrue();
     }
 
     @Test
