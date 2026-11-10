@@ -35,7 +35,8 @@ class AccountController {
     @PostMapping
     ResponseEntity<AccountResponse> open(@Valid @RequestBody OpenAccountRequest body) {
         Account account = accounts.openAccount(
-                new OpenAccountCommand(body.code(), body.name(), body.currency(), body.type()));
+                new OpenAccountCommand(body.code(), body.name(), body.currency(), body.type(),
+                        Boolean.TRUE.equals(body.allowNegative())));
         return ResponseEntity
                 .created(URI.create("/accounts/" + account.id() + "/balance"))
                 .body(AccountResponse.of(account));
@@ -53,12 +54,15 @@ class AccountController {
             @NotBlank @Size(max = 64) String code,
             @NotBlank @Size(max = 255) String name,
             @NotNull @Pattern(regexp = "[A-Z]{3}", message = "must be an ISO 4217 code like INR") String currency,
-            @NotNull AccountType type) {
+            @NotNull AccountType type,
+            Boolean allowNegative) {  // optional, defaults to false: overdraft is opt-in
     }
 
-    record AccountResponse(UUID id, String code, String name, String currency, AccountType type) {
+    record AccountResponse(UUID id, String code, String name, String currency, AccountType type,
+                           boolean allowNegative) {
         static AccountResponse of(Account a) {
-            return new AccountResponse(a.id().value(), a.code(), a.name(), a.currency().getCurrencyCode(), a.type());
+            return new AccountResponse(a.id().value(), a.code(), a.name(), a.currency().getCurrencyCode(), a.type(),
+                    a.allowNegative());
         }
     }
 

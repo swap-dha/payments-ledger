@@ -1,7 +1,9 @@
 package dev.swapnil.ledger.adapter.out.persistence;
 
 import dev.swapnil.ledger.application.port.out.DuplicateIdempotencyKeyException;
+import dev.swapnil.ledger.application.port.out.InsufficientFundsException;
 import dev.swapnil.ledger.application.port.out.JournalEntryRepository;
+import dev.swapnil.ledger.domain.model.Account;
 import dev.swapnil.ledger.domain.model.AccountId;
 import dev.swapnil.ledger.domain.model.JournalEntry;
 import dev.swapnil.ledger.domain.model.Posting;
@@ -11,8 +13,11 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.Currency;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -26,8 +31,18 @@ class JdbcJournalEntryRepository implements JournalEntryRepository {
     }
 
     /**
-     * One transaction for the entry and every posting. The database re-checks zero-sum and
-     * "at least two postings" at commit (V1, V2), so a bug here cannot store an invalid entry.
+     * One transaction for the entry and every posting. Order matters:
+     * <ol>
+     *   <li>Insert the entry first. A concurrent request with the same idempotency key blocks on the
+     *       unique index and then fails with a duplicate key, so a retry is recognised as a retry
+     *       before any balance is checked. (Checking funds first would make the loser of a retry race
+     *       see the winner's debit and report "insufficient funds" for money that did move.)</li>
+     *   <li>Lock every affected account with {@code SELECT ... FOR UPDATE}, always in account-id
+     *       order, so transfers A&rarr;B and B&rarr;A running at once cannot deadlock.</li>
+     *   <li>Check each projected balance against the account's overdraft rule while holding the lock.</li>
+     *   <li>Insert the postings. The V3 trigger updates the cached balance and re-checks the rule;
+     *       V1 and V2 re-check zero-sum and "at least two postings" at commit.</li>
+     * </ol>
      */
     @Override
     @Transactional
@@ -47,7 +62,24 @@ class JdbcJournalEntryRepository implements JournalEntryRepository {
             throw new DuplicateIdempotencyKeyException(entry.idempotencyKey(), e);
         }
 
-        for (Posting p : entry.postings()) {
+        Map<AccountId, LockedAccount> locked = lockInIdOrder(entry.postings());
+
+        List<Posting> ordered = entry.postings().stream()
+                .sorted(Comparator.comparing(p -> p.accountId().value()))
+                .toList();
+        for (Posting p : ordered) {
+            LockedAccount acc = locked.get(p.accountId());
+            if (acc == null) {
+                throw new IllegalStateException("account " + p.accountId() + " does not exist");
+            }
+            long after = Math.addExact(acc.signedBalance(), p.amountMinor());
+            if (!acc.account().permits(after)) {
+                throw new InsufficientFundsException(acc.account().code(),
+                        acc.account().type().naturalBalance(acc.signedBalance()), Math.abs(p.amountMinor()));
+            }
+        }
+
+        for (Posting p : ordered) {
             jdbc.sql("""
                     INSERT INTO posting (id, journal_entry_id, account_id, amount_minor)
                     VALUES (:id, :entryId, :accountId, :amount)
@@ -58,6 +90,25 @@ class JdbcJournalEntryRepository implements JournalEntryRepository {
                     .param("amount", p.amountMinor())
                     .update();
         }
+    }
+
+    private Map<AccountId, LockedAccount> lockInIdOrder(List<Posting> postings) {
+        List<UUID> ids = postings.stream().map(p -> p.accountId().value()).sorted().toList();
+        Map<AccountId, LockedAccount> locked = new HashMap<>();
+        jdbc.sql("""
+                        SELECT id, code, name, currency, type, allow_negative, balance_minor
+                        FROM account WHERE id IN (:ids)
+                        ORDER BY id
+                        FOR UPDATE
+                        """)
+                .param("ids", ids)
+                .query((rs, n) -> new LockedAccount(AccountRows.map(rs), rs.getLong("balance_minor")))
+                .list()
+                .forEach(a -> locked.put(a.account().id(), a));
+        return locked;
+    }
+
+    private record LockedAccount(Account account, long signedBalance) {
     }
 
     @Override

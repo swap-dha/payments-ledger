@@ -68,8 +68,8 @@ class TransferServiceIT {
             assertThat(e.id()).isEqualTo(id);
             assertThat(e.postings()).hasSize(2);
         });
-        assertThat(accounts.signedPostingSum(cash.id())).as("credited").isEqualTo(-25_000);
-        assertThat(accounts.signedPostingSum(customer.id())).as("debited").isEqualTo(25_000);
+        assertThat(accounts.signedPostingSum(cash.id())).as("cash debited").isEqualTo(25_000);
+        assertThat(accounts.signedPostingSum(customer.id())).as("wallet credited").isEqualTo(-25_000);
     }
 
     @Test
@@ -110,7 +110,7 @@ class TransferServiceIT {
             Integer stored = jdbc.queryForObject(
                     "SELECT COUNT(*) FROM journal_entry WHERE idempotency_key = ?", Integer.class, key);
             assertThat(stored).as("exactly one entry in the database").isEqualTo(1);
-            assertThat(accounts.signedPostingSum(customer.id())).as("money moved once").isEqualTo(5_000);
+            assertThat(accounts.signedPostingSum(cash.id())).as("money moved once").isEqualTo(5_000);
         } finally {
             pool.shutdownNow();
         }
@@ -121,7 +121,8 @@ class TransferServiceIT {
     }
 
     private TransferCommand cmd(String key, long amount) {
-        return new TransferCommand(key, cash.id(), customer.id(), amount, "INR",
+        // a customer deposit: credit the customer's wallet (from), debit cash (to)
+        return new TransferCommand(key, customer.id(), cash.id(), amount, "INR",
                 LocalDate.of(2026, 11, 9), "integration test");
     }
 }

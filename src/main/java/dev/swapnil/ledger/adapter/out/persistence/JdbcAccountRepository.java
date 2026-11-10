@@ -4,14 +4,11 @@ import dev.swapnil.ledger.application.port.out.AccountRepository;
 import dev.swapnil.ledger.application.port.out.DuplicateAccountCodeException;
 import dev.swapnil.ledger.domain.model.Account;
 import dev.swapnil.ledger.domain.model.AccountId;
-import dev.swapnil.ledger.domain.model.AccountType;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
-import java.util.Currency;
 import java.util.Optional;
-import java.util.UUID;
 
 @Repository
 class JdbcAccountRepository implements AccountRepository {
@@ -33,27 +30,23 @@ class JdbcAccountRepository implements AccountRepository {
 
     private void insert(Account account) {
         jdbc.sql("""
-                INSERT INTO account (id, code, name, currency, type)
-                VALUES (:id, :code, :name, :currency, :type)
+                INSERT INTO account (id, code, name, currency, type, allow_negative)
+                VALUES (:id, :code, :name, :currency, :type, :allowNegative)
                 """)
                 .param("id", account.id().value())
                 .param("code", account.code())
                 .param("name", account.name())
                 .param("currency", account.currency().getCurrencyCode())
                 .param("type", account.type().name())
+                .param("allowNegative", account.allowNegative())
                 .update();
     }
 
     @Override
     public Optional<Account> findById(AccountId id) {
-        return jdbc.sql("SELECT id, code, name, currency, type FROM account WHERE id = :id")
+        return jdbc.sql("SELECT " + AccountRows.COLUMNS + " FROM account WHERE id = :id")
                 .param("id", id.value())
-                .query((rs, n) -> new Account(
-                        new AccountId(rs.getObject("id", UUID.class)),
-                        rs.getString("code"),
-                        rs.getString("name"),
-                        Currency.getInstance(rs.getString("currency")),
-                        AccountType.valueOf(rs.getString("type"))))
+                .query((rs, n) -> AccountRows.map(rs))
                 .optional();
     }
 

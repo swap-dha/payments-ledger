@@ -11,7 +11,7 @@ public interface AccountUseCases {
 
     Balance balanceOf(AccountId id);
 
-    record OpenAccountCommand(String code, String name, String currency, AccountType type) {
+    record OpenAccountCommand(String code, String name, String currency, AccountType type, boolean allowNegative) {
     }
 
     /**

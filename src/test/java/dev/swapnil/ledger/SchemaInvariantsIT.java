@@ -98,6 +98,30 @@ class SchemaInvariantsIT {
                 .rootCause().hasMessageMatching("(?s).*(has 1 posting|unbalanced).*");
     }
 
+    @Test
+    void databaseRejectsOverdraftEvenWhenTheApplicationIsBypassed() {
+        // raw SQL, no Java checks: credit an empty asset account (money it does not have)
+        assertThatThrownBy(() -> tx.executeWithoutResult(s -> {
+            UUID id = insertEntry();
+            insertPosting(id, cash, -100);
+            insertPosting(id, customer, 100);
+        })).rootCause().hasMessageContaining("insufficient funds");
+    }
+
+    @Test
+    void cachedBalanceAlwaysEqualsThePostingSum() {
+        tx.executeWithoutResult(s -> balancedEntryWithKey("rec-" + UUID.randomUUID()));
+        tx.executeWithoutResult(s -> balancedEntryWithKey("rec-" + UUID.randomUUID()));
+
+        Integer drifted = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM account a
+                WHERE a.balance_minor <> COALESCE((SELECT SUM(p.amount_minor) FROM posting p WHERE p.account_id = a.id), 0)
+                """, Integer.class);
+        assertThat(drifted).as("accounts whose cached balance disagrees with their postings").isZero();
+        assertThat(jdbc.queryForObject("SELECT balance_minor FROM account WHERE id = ?", Long.class, cash))
+                .isEqualTo(200L);
+    }
+
     private void balancedEntryWithKey(String key) {
         UUID id = UUID.randomUUID();
         jdbc.update("INSERT INTO journal_entry (id, idempotency_key, currency, effective_date) "

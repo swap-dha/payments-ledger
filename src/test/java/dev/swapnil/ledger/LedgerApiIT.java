@@ -37,8 +37,8 @@ class LedgerApiIT {
     @Test
     void openTransferRetryAndReadBalances() throws Exception {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
-        String operating = openAccount("OPERATING-" + suffix, "ASSET");
-        String settlement = openAccount("SETTLEMENT-" + suffix, "ASSET");
+        String operating = openAccount("OPERATING-" + suffix, "ASSET", true);  // funding source: may go negative
+        String settlement = openAccount("SETTLEMENT-" + suffix, "ASSET", false);
         String key = "pay-" + suffix;
         String transfer = """
                 {"fromAccountId":"%s","toAccountId":"%s","amountMinor":150000,"currency":"INR","description":"sweep to settlement"}
@@ -81,15 +81,15 @@ class LedgerApiIT {
     @Test
     void duplicateAccountCodeIs409() throws Exception {
         String code = "DUP-" + UUID.randomUUID().toString().substring(0, 8);
-        openAccount(code, "ASSET");
+        openAccount(code, "ASSET", false);
 
-        HttpResponse<String> again = send(post("/accounts", accountJson(code, "ASSET")));
+        HttpResponse<String> again = send(post("/accounts", accountJson(code, "ASSET", false)));
 
         assertThat(again.statusCode()).isEqualTo(409);
     }
 
-    private String openAccount(String code, String type) throws Exception {
-        HttpResponse<String> response = send(post("/accounts", accountJson(code, type)));
+    private String openAccount(String code, String type, boolean allowNegative) throws Exception {
+        HttpResponse<String> response = send(post("/accounts", accountJson(code, type, allowNegative)));
         assertThat(response.statusCode()).isEqualTo(201);
         assertThat(response.headers().firstValue("Location")).isPresent();
         return JsonPath.read(response.body(), "$.id");
@@ -101,10 +101,10 @@ class LedgerApiIT {
         return ((Number) JsonPath.read(response.body(), "$.balanceMinor")).longValue();
     }
 
-    private static String accountJson(String code, String type) {
+    private static String accountJson(String code, String type, boolean allowNegative) {
         return """
-                {"code":"%s","name":"%s account","currency":"INR","type":"%s"}
-                """.formatted(code, code, type);
+                {"code":"%s","name":"%s account","currency":"INR","type":"%s","allowNegative":%s}
+                """.formatted(code, code, type, allowNegative);
     }
 
     private HttpRequest.Builder post(String path, String json) {

@@ -1,6 +1,7 @@
 package dev.swapnil.ledger.adapter.in.web;
 
 import dev.swapnil.ledger.application.port.out.DuplicateAccountCodeException;
+import dev.swapnil.ledger.application.port.out.InsufficientFundsException;
 import dev.swapnil.ledger.application.service.TransferService.AccountNotFoundException;
 import dev.swapnil.ledger.application.service.TransferService.CurrencyMismatchException;
 import dev.swapnil.ledger.application.service.TransferService.IdempotencyConflictException;
@@ -48,6 +49,15 @@ class ApiExceptionHandler {
     @ExceptionHandler(CurrencyMismatchException.class)
     ProblemDetail currencyMismatch(CurrencyMismatchException e) {
         return problem(HttpStatus.UNPROCESSABLE_CONTENT, "currency-mismatch", "Currency mismatch", e.getMessage());
+    }
+
+    @ExceptionHandler(InsufficientFundsException.class)
+    ProblemDetail insufficientFunds(InsufficientFundsException e) {
+        ProblemDetail p = problem(HttpStatus.UNPROCESSABLE_CONTENT, "insufficient-funds", "Insufficient funds", e.getMessage());
+        p.setProperty("accountCode", e.accountCode());
+        p.setProperty("availableMinor", e.availableMinor());
+        p.setProperty("requestedMinor", e.requestedMinor());
+        return p;
     }
 
     @ExceptionHandler(InvalidJournalEntryException.class)

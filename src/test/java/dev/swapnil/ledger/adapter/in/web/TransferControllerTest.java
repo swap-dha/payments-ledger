@@ -3,6 +3,7 @@ package dev.swapnil.ledger.adapter.in.web;
 import dev.swapnil.ledger.application.port.in.PostTransferUseCase;
 import dev.swapnil.ledger.application.port.in.PostTransferUseCase.TransferCommand;
 import dev.swapnil.ledger.application.port.in.PostTransferUseCase.TransferResult;
+import dev.swapnil.ledger.application.port.out.InsufficientFundsException;
 import dev.swapnil.ledger.application.service.TransferService.AccountNotFoundException;
 import dev.swapnil.ledger.application.service.TransferService.CurrencyMismatchException;
 import dev.swapnil.ledger.application.service.TransferService.IdempotencyConflictException;
@@ -117,6 +118,18 @@ class TransferControllerTest {
         postTransfer("key-1", body(10_000, "INR"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.title").value("Account not found"));
+    }
+
+    @Test
+    void insufficientFundsIs422WithAmounts() throws Exception {
+        useCase = cmd -> { throw new InsufficientFundsException("OPERATING", 1_000, 10_000); };
+
+        postTransfer("key-1", body(10_000, "INR"))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("/insufficient-funds")))
+                .andExpect(jsonPath("$.accountCode").value("OPERATING"))
+                .andExpect(jsonPath("$.availableMinor").value(1_000))
+                .andExpect(jsonPath("$.requestedMinor").value(10_000));
     }
 
     @Test

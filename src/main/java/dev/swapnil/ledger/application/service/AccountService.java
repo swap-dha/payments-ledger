@@ -18,7 +18,8 @@ public class AccountService implements AccountUseCases {
 
     @Override
     public Account openAccount(OpenAccountCommand cmd) {
-        Account account = Account.open(cmd.code(), cmd.name(), Currency.getInstance(cmd.currency()), cmd.type());
+        Account account = Account.open(cmd.code(), cmd.name(), Currency.getInstance(cmd.currency()), cmd.type(),
+                cmd.allowNegative());
         accounts.save(account); // throws DuplicateAccountCodeException if the code is taken
         return account;
     }

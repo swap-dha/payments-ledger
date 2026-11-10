@@ -4,7 +4,7 @@
 
 A double-entry payments ledger in Java 21 and Spring Boot 4, built the way banking systems need to be built: every movement of money balances, nothing is ever updated in place, and retries never double-post.
 
-> **Status:** Day 4 of a 14-day public build. Domain, schema invariants, persistence, idempotent transfers and the REST API are done; balance-level concurrency control and the Kafka outbox are next. See [Roadmap](#roadmap).
+> **Status:** Day 5 of a 14-day public build. Domain, schema invariants, persistence, idempotent transfers, the REST API and concurrency-safe overdraft protection are done; the Kafka outbox is next. See [Roadmap](#roadmap).
 
 ## Why this exists
 
@@ -16,6 +16,7 @@ Most "wallet" demos store a `balance` column and update it. Real ledgers don't: 
 | Ledger history is immutable | No setters; postings list is unmodifiable | `UPDATE`/`DELETE` blocked by trigger |
 | A retried request never double-posts | Same key + same transfer returns the original id; same key + different transfer is rejected | `UNIQUE (idempotency_key)` |
 | Concurrent identical requests post once | Loser of the race reads the winner's entry | Unique constraint decides the winner |
+| Concurrent debits never overdraw an account | Projected balance checked under a row lock; overdraft is opt-in per account | Trigger maintains the balance and rejects an overdraft, even for SQL that bypasses the app |
 | No entry without legs | At least two postings, one debit and one credit | Deferred trigger: entry needs ≥ 2 postings at commit |
 | No zero or overflowing amounts | `Posting` rejects zero; sums use `Math.addExact` | `CHECK (amount_minor <> 0)` |
 
@@ -56,7 +57,7 @@ Same key, different amount: refused instead of falsely reporting success.
 | `POST /transfers` | Move money; `Idempotency-Key` header required. `fromAccountId` is credited, `toAccountId` debited |
 | `GET /accounts/{id}/balance` | `balanceMinor` (as an accountant reads it) and `signedMinor` (raw, for reconciliation) |
 
-Status codes follow one rule: **400** malformed request · **404** unknown account · **409** collides with stored state (key reuse, duplicate account code) · **422** well-formed but breaks a ledger rule (currency mismatch).
+Status codes follow one rule: **400** malformed request · **404** unknown account · **409** collides with stored state (key reuse, duplicate account code) · **422** well-formed but breaks a ledger rule (insufficient funds, currency mismatch).
 
 ## Architecture
 
@@ -91,6 +92,7 @@ mvn verify                   # unit + architecture tests, then Testcontainers in
 
 ## Tests
 
+- `OverdraftConcurrencyIT` — **10 threads each pay 300.00 from an account holding 1,000.00: exactly 3 succeed, 7 get `InsufficientFunds`, the balance ends at 100.00**, repeated 3 times per build. Plus opposing A→B / B→A transfers to prove there is no deadlock. Removing the `FOR UPDATE` makes this test fail: the stale check lets all 10 through and only the database trigger stops the overdraft.
 - `LedgerApiIT` — the full stack over real HTTP: open accounts, transfer, retry (200 + replay header), key reuse (409), balances, unknown account (404), duplicate code (409).
 - `TransferControllerTest` — 8 cases on the HTTP contract with MockMvc: status codes, headers, field-level validation errors, problem types.
 - `TransferServiceTest` — 7 cases with in-memory adapters: retries, key reuse conflicts, a simulated race, unknown accounts, currency mismatch.
@@ -105,7 +107,7 @@ mvn verify                   # unit + architecture tests, then Testcontainers in
 - [x] Days 3-4 — domain model and zero-sum invariant
 - [x] Days 5-6 (part 1) — JDBC persistence, idempotent transfer use case, concurrent-retry test
 - [x] Days 5-6 (part 2) — REST API with `Idempotency-Key` header, RFC 9457 errors
-- [ ] Days 7-8 — concurrent debits on one account, proven with a parallel test
+- [x] Days 7-8 — concurrent debits on one account, proven with a parallel test
 - [ ] Days 9-10 — transactional outbox to Kafka, exactly-once publication test
 - [ ] Days 11-12 — end-of-day transaction report reconciled against balances
 - [ ] Days 13-14 — OpenAPI docs, ADRs, v1.0
@@ -114,5 +116,7 @@ mvn verify                   # unit + architecture tests, then Testcontainers in
 
 - **Signed postings instead of debit/credit columns.** One `amount_minor` column with `+` for debit and `-` for credit makes the zero-sum check a single `SUM`.
 - **Deferred constraint trigger.** The balance check runs at `COMMIT`, after all postings of an entry are inserted, so the database never sees a half-written entry as valid or invalid.
-- **No stored balances (yet).** Balances are derived from postings. A cached balance with optimistic locking comes on Days 7-8, when it is needed for concurrent debit checks.
+- **Pessimistic locks, not optimistic versioning.** Hot accounts (a merchant's settlement account, a bank's own cash) take many concurrent postings. With optimistic locking most would collide and retry; `SELECT … FOR UPDATE` queues them instead. Accounts are always locked in id order, so A→B and B→A at once cannot deadlock.
+- **Idempotency before funds.** The entry row is inserted *before* balances are checked. A concurrent retry blocks on the unique key and is recognised as a retry; checking funds first would make it see the original's debit and wrongly report "insufficient funds" for money that did move.
+- **Cached balance as derived data.** `account.balance_minor` is maintained by a trigger on every posting, so a balance check is one locked row read, not a `SUM`. Postings stay the source of truth, and a reconciliation test asserts the two never drift.
 - **Transactions live in the adapter, not the service.** `TransferService` has no Spring imports. The JDBC adapter wraps entry + postings in one transaction, which also lets the service recover from a lost idempotency race in a fresh transaction. A failed `INSERT` aborts a PostgreSQL transaction, so retrying inside it would be impossible.
